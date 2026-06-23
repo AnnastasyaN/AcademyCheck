@@ -7,11 +7,10 @@ use App\Http\Controllers\Api\Traits\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Models\Document;
 use App\Models\DocumentType;
-use App\Services\TextExtractionService;
+use App\Services\DocumentVersionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Throwable;
@@ -20,18 +19,22 @@ class DocumentController extends Controller
 {
     use ApiResponse;
 
+    public function __construct(
+        private DocumentVersionService $documentVersionService,
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         $documents = Document::query()
             ->with(['documentType', 'latestVersion'])
             ->where('user_id', $request->user()->id)
             ->latest()
-            ->paginate(15);
+            ->get();
 
-        return $this->paginated($documents);
+        return $this->success($documents);
     }
 
-    public function store(Request $request, TextExtractionService $textExtractionService): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'document_type_id' => [
@@ -45,10 +48,8 @@ class DocumentController extends Controller
             'file' => ['required', 'file', 'mimes:pdf,docx', 'max:10240'],
         ]);
 
-        $storedPath = null;
-
         try {
-            [$document, $version] = DB::transaction(function () use ($request, $validated, $textExtractionService, &$storedPath): array {
+            [$document, $version] = DB::transaction(function () use ($request, $validated): array {
                 $document = Document::create([
                     'user_id' => $request->user()->id,
                     'document_type_id' => $validated['document_type_id'],
@@ -59,50 +60,18 @@ class DocumentController extends Controller
                     'status' => Document::STATUS_UPLOADED,
                 ]);
 
-                $file = $request->file('file');
-                $storedPath = $file->store(
-                    "documents/user_{$request->user()->id}/document_{$document->id}",
-                    'local',
+                $version = $this->documentVersionService->createInitialVersion(
+                    $document,
+                    $request->file('file'),
                 );
-
-                if ($storedPath === false) {
-                    throw new \RuntimeException('Dokumen gagal disimpan.');
-                }
-
-                $extractedText = $textExtractionService->extract(
-                    Storage::disk('local')->path($storedPath),
-                    $file->getClientOriginalExtension(),
-                );
-
-                $version = $document->versions()->create([
-                    'version_number' => 1,
-                    'file_path' => $storedPath,
-                    'file_original_name' => $file->getClientOriginalName(),
-                    'file_type' => strtolower($file->getClientOriginalExtension()),
-                    'file_size' => $file->getSize(),
-                    'extracted_text' => $extractedText,
-                    'uploaded_at' => now(),
-                ]);
-
-                $document->update([
-                    'latest_version_id' => $version->id,
-                ]);
 
                 return [$document, $version];
             });
         } catch (TextExtractionException $exception) {
             report($exception);
 
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
             return $this->validationError(null, $exception->getMessage());
         } catch (Throwable $exception) {
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
             throw $exception;
         }
 
@@ -124,10 +93,10 @@ class DocumentController extends Controller
             'versions',
             'latestVersion',
             'analysisResults.aspectScores',
-        ]));
+        ])->loadCount('reviewerComments'));
     }
 
-    public function update(Request $request, Document $document, TextExtractionService $textExtractionService): JsonResponse
+    public function update(Request $request, Document $document): JsonResponse
     {
         if ($document->user_id !== $request->user()->id) {
             return $this->forbidden('Anda tidak memiliki akses untuk memperbarui dokumen ini.');
@@ -143,72 +112,13 @@ class DocumentController extends Controller
             'topic' => ['sometimes', 'nullable', 'string', 'max:255'],
             'keywords' => ['sometimes', 'nullable', 'string'],
             'description' => ['sometimes', 'nullable', 'string'],
-            'file' => ['sometimes', 'required', 'file', 'mimes:pdf,docx', 'max:10240'],
         ]);
 
-        $storedPath = null;
-
-        try {
-            DB::transaction(function () use ($request, $document, $validated, $textExtractionService, &$storedPath): void {
-                $document->update($validated);
-
-                if ($request->hasFile('file')) {
-                    $file = $request->file('file');
-                    $storedPath = $file->store(
-                        "documents/user_{$document->user_id}/document_{$document->id}",
-                        'local',
-                    );
-
-                    if ($storedPath === false) {
-                        throw new \RuntimeException('Dokumen gagal disimpan.');
-                    }
-
-                    $extractedText = $textExtractionService->extract(
-                        Storage::disk('local')->path($storedPath),
-                        $file->getClientOriginalExtension(),
-                    );
-
-                    $nextVersion = ($document->versions()->max('version_number') ?? 0) + 1;
-
-                    $version = $document->versions()->create([
-                        'version_number' => $nextVersion,
-                        'file_path' => $storedPath,
-                        'file_original_name' => $file->getClientOriginalName(),
-                        'file_type' => strtolower($file->getClientOriginalExtension()),
-                        'file_size' => $file->getSize(),
-                        'extracted_text' => $extractedText,
-                        'uploaded_at' => now(),
-                    ]);
-
-                    $document->update([
-                        'latest_version_id' => $version->id,
-                        'status' => Document::STATUS_UPLOADED,
-                    ]);
-                }
-            });
-        } catch (TextExtractionException $exception) {
-            report($exception);
-
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
-            return $this->validationError(null, $exception->getMessage());
-        } catch (Throwable $exception) {
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
-            Log::error('Gagal memperbarui dokumen: ' . $exception->getMessage());
-
-            throw $exception;
-        }
+        $document->update($validated);
 
         return $this->success(
-            $document->fresh(['documentType', 'latestVersion', 'versions']),
-            $storedPath
-                ? 'Dokumen berhasil diperbarui dan file baru disimpan sebagai versi terbaru.'
-                : 'Dokumen berhasil diperbarui.',
+            $document->fresh(['documentType']),
+            'Dokumen berhasil diperbarui.',
         );
     }
 

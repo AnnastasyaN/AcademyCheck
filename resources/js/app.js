@@ -70,8 +70,8 @@ const submitAuthForm = async (form, endpoint, fallbackMessage) => {
             return;
         }
 
-        storage.saveSession(data.token, data.user);
-        redirectForUser(data.user);
+        storage.saveSession(data.data.token, data.data.user);
+        redirectForUser(data.data.user);
     } catch {
         showAlert('Tidak dapat terhubung ke server. Silakan coba kembali.');
     } finally {
@@ -1848,28 +1848,6 @@ const openEditDocumentModal = (documentData) => {
 const closeEditDocumentModal = () => {
     document.getElementById('editDocumentModal').classList.add('hidden');
     hideAlert('editDocumentAlert');
-    const fileInput = document.getElementById('editDocumentFile');
-    if (fileInput) {
-        fileInput.value = '';
-        updateEditFileLabel(null);
-    }
-};
-
-const updateEditFileLabel = (file) => {
-    const label = document.getElementById('editFileLabel');
-    const meta = document.getElementById('editFileMeta');
-    const area = document.getElementById('editFileDropArea');
-
-    if (!file) {
-        label.textContent = 'Ganti file (opsional)';
-        meta.textContent = 'PDF atau DOCX maksimal 10 MB';
-        area.classList.remove('has-file');
-        return;
-    }
-
-    label.textContent = file.name;
-    meta.textContent = `${(file.size / 1024 / 1024).toFixed(2)} MB`;
-    area.classList.add('has-file');
 };
 
 const submitEditDocument = async (form, documentId, token) => {
@@ -1880,61 +1858,22 @@ const submitEditDocument = async (form, documentId, token) => {
     setSubmitting(form, true);
 
     try {
-        const fileInput = document.getElementById('editDocumentFile');
-        const hasFile = fileInput?.files?.length > 0;
+        const payload = {
+            title: document.getElementById('editDocumentTitle').value.trim(),
+            topic: document.getElementById('editDocumentTopic').value.trim() || null,
+            keywords: document.getElementById('editDocumentKeywords').value.trim() || null,
+            description: document.getElementById('editDocumentDescription').value.trim() || null,
+        };
 
-        let response;
-
-        if (hasFile) {
-            const fileError = validateDocumentFile(fileInput.files[0]);
-
-            if (fileError) {
-                showAlert(fileError, 'editDocumentAlert');
-                setSubmitting(form, false);
-                return;
-            }
-
-            const formData = new FormData();
-            formData.append('file', fileInput.files[0]);
-            if (document.getElementById('editDocumentTitle').value.trim()) {
-                formData.append('title', document.getElementById('editDocumentTitle').value.trim());
-            }
-            if (document.getElementById('editDocumentTopic').value.trim()) {
-                formData.append('topic', document.getElementById('editDocumentTopic').value.trim());
-            }
-            if (document.getElementById('editDocumentKeywords').value.trim()) {
-                formData.append('keywords', document.getElementById('editDocumentKeywords').value.trim());
-            }
-            if (document.getElementById('editDocumentDescription').value.trim()) {
-                formData.append('description', document.getElementById('editDocumentDescription').value.trim());
-            }
-            formData.append('_method', 'PUT');
-
-            response = await fetch(`/api/documents/${documentId}`, {
-                method: 'POST',
-                headers: {
-                    Accept: 'application/json',
-                    Authorization: `Bearer ${token}`,
-                },
-                body: formData,
-            });
-        } else {
-            const payload = {
-                title: document.getElementById('editDocumentTitle').value.trim(),
-                topic: document.getElementById('editDocumentTopic').value.trim() || null,
-                keywords: document.getElementById('editDocumentKeywords').value.trim() || null,
-                description: document.getElementById('editDocumentDescription').value.trim() || null,
-            };
-            response = await fetch(`/api/documents/${documentId}`, {
-                method: 'PUT',
-                headers: {
-                    Accept: 'application/json',
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(payload),
-            });
-        }
+        const response = await fetch(`/api/documents/${documentId}`, {
+            method: 'PUT',
+            headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+        });
 
         const data = await response.json();
 
@@ -2072,10 +2011,6 @@ const initializeDocumentLibrary = () => {
         const documentId = form.dataset.documentId;
         if (documentId) submitEditDocument(form, documentId, libraryToken);
     });
-    document.getElementById('editDocumentFile')?.addEventListener('change', (event) => {
-        updateEditFileLabel(event.target.files[0]);
-    });
-
     document.getElementById('closeDeleteDocumentModal')?.addEventListener('click', () => {
         document.getElementById('deleteDocumentModal').classList.add('hidden');
         hideAlert('deleteDocumentAlert');
@@ -2130,7 +2065,7 @@ const renderStringList = (id, items) => {
     list.replaceChildren(...values.map((value) => createTextElement('li', '', value)));
 };
 
-const createVersionRow = (version) => {
+const createVersionRow = (version, documentData) => {
     const row = document.createElement('tr');
 
     row.append(
@@ -2183,7 +2118,7 @@ const renderDocumentDetail = (documentData) => {
     }
 
     document.getElementById('documentVersionTable').replaceChildren(
-        ...(documentData.versions || []).map(createVersionRow),
+        ...(documentData.versions || []).map((v) => createVersionRow(v, documentData)),
     );
 };
 

@@ -69,6 +69,11 @@
                     <input type="password" name="password" autocomplete="new-password" placeholder="Minimal 8 karakter" minlength="8" required>
                 </label>
 
+                <label>
+                    <span>Konfirmasi Password</span>
+                    <input type="password" name="password_confirmation" autocomplete="new-password" placeholder="Ulangi password" minlength="8" required>
+                </label>
+
                 <button type="submit" class="primary-button">
                     <span class="button-label">Daftar</span>
                     <span class="button-loader hidden">Memproses...</span>

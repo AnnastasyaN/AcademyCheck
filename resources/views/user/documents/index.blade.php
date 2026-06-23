@@ -132,13 +132,6 @@
                     <textarea id="editDocumentDescription" name="description" rows="4"></textarea>
                 </label>
 
-                <label class="file-field modal-form-wide" id="editFileDropArea">
-                    <input type="file" name="file" id="editDocumentFile" accept=".pdf,.docx">
-                    <span class="file-icon">+</span>
-                    <strong id="editFileLabel">Upload file revisi (opsional, akan menambah versi baru)</strong>
-                    <small id="editFileMeta">PDF atau DOCX maksimal 10 MB</small>
-                </label>
-
                 <div class="modal-form-actions">
                     <button type="button" id="cancelEditDocument" class="secondary-button">Batal</button>
                     <button type="submit" class="primary-button">

@@ -6,16 +6,19 @@ use App\Exceptions\TextExtractionException;
 use App\Http\Controllers\Api\Traits\ApiResponse;
 use App\Http\Controllers\Controller;
 use App\Models\Document;
-use App\Services\TextExtractionService;
+use App\Models\DocumentVersion;
+use App\Services\DocumentVersionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Throwable;
 
 class DocumentVersionController extends Controller
 {
     use ApiResponse;
+
+    public function __construct(
+        private DocumentVersionService $documentVersionService,
+    ) {}
 
     public function index(Request $request, Document $document): JsonResponse
     {
@@ -31,11 +34,8 @@ class DocumentVersionController extends Controller
         );
     }
 
-    public function store(
-        Request $request,
-        Document $document,
-        TextExtractionService $textExtractionService,
-    ): JsonResponse {
+    public function store(Request $request, Document $document): JsonResponse
+    {
         if ($document->user_id !== $request->user()->id) {
             return $this->forbidden('Anda tidak memiliki akses untuk mengunggah revisi dokumen ini.');
         }
@@ -45,69 +45,17 @@ class DocumentVersionController extends Controller
             'revision_note' => ['nullable', 'string', 'max:5000'],
         ]);
 
-        $storedPath = null;
-
         try {
-            $version = DB::transaction(function () use (
-                $request,
+            $version = $this->documentVersionService->createRevision(
                 $document,
-                $validated,
-                $textExtractionService,
-                &$storedPath,
-            ) {
-                $lockedDocument = Document::query()
-                    ->whereKey($document->id)
-                    ->lockForUpdate()
-                    ->firstOrFail();
-
-                $nextVersionNumber = ((int) $lockedDocument->versions()->max('version_number')) + 1;
-                $file = $request->file('file');
-                $storedPath = $file->store(
-                    "document-revisions/user_{$request->user()->id}/document_{$lockedDocument->id}",
-                    'local',
-                );
-
-                if ($storedPath === false) {
-                    throw new \RuntimeException('Dokumen revisi gagal disimpan.');
-                }
-
-                $extractedText = $textExtractionService->extract(
-                    Storage::disk('local')->path($storedPath),
-                    $file->getClientOriginalExtension(),
-                );
-
-                $version = $lockedDocument->versions()->create([
-                    'version_number' => $nextVersionNumber,
-                    'file_path' => $storedPath,
-                    'file_original_name' => $file->getClientOriginalName(),
-                    'file_type' => strtolower($file->getClientOriginalExtension()),
-                    'file_size' => $file->getSize(),
-                    'extracted_text' => $extractedText,
-                    'revision_note' => $validated['revision_note'] ?? null,
-                    'uploaded_at' => now(),
-                ]);
-
-                $lockedDocument->update([
-                    'latest_version_id' => $version->id,
-                    'latest_score' => null,
-                    'status' => Document::STATUS_REVISED,
-                ]);
-
-                return $version;
-            });
+                $request->file('file'),
+                $validated['revision_note'] ?? null,
+            );
         } catch (TextExtractionException $exception) {
             report($exception);
 
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
             return $this->validationError(null, $exception->getMessage());
         } catch (Throwable $exception) {
-            if ($storedPath !== null) {
-                Storage::disk('local')->delete($storedPath);
-            }
-
             throw $exception;
         }
 

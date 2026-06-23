@@ -69,14 +69,16 @@ trait ApiResponse
         return response()->json([
             'success' => true,
             'message' => $message,
-            'data' => $paginator->items(),
-            'meta' => [
+            'data' => [
+                'data' => $paginator->items(),
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
                 'from' => $paginator->firstItem(),
                 'to' => $paginator->lastItem(),
+                'prev_page_url' => $paginator->previousPageUrl(),
+                'next_page_url' => $paginator->nextPageUrl(),
             ],
         ]);
     }
